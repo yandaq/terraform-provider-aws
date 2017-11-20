@@ -669,6 +669,14 @@
 			"versionExact": "v1.12.27"
 		},
 		{
+			"checksumSHA1": "rJUCY0ZBpPvuFJ5lUPev42mGsGU=",
+			"path": "github.com/aws/aws-sdk-go/service/gamelift",
+			"revision": "12a4975283c52e2fa88b0ae22882f83cf048eeb4",
+			"revisionTime": "2017-11-14T23:58:35Z",
+			"version": "v1.12.27",
+			"versionExact": "v1.12.27"
+		},
+		{
 			"checksumSHA1": "+gED8OQZsY/taXgjkGbBJlx1hnY=",
 			"path": "github.com/aws/aws-sdk-go/service/glacier",
 			"revision": "12a4975283c52e2fa88b0ae22882f83cf048eeb4",
