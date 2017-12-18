@@ -2,10 +2,12 @@ package aws
 
 import (
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/gamelift"
+	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
 )
@@ -13,32 +15,38 @@ import (
 func TestAccAWSGameliftBuild_basic(t *testing.T) {
 	var conf gamelift.Build
 
+	buildName := fmt.Sprintf("tf_acc_build_%s", acctest.RandString(8))
+	bucketName := fmt.Sprintf("tf_acc_bucket_%s", acctest.RandString(8))
+	roleName := fmt.Sprintf("tf_acc_role_%s", acctest.RandString(8))
+	roleArnRe := regexp.MustCompile(":" + roleName + "$")
+
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckAWSGameliftBuildDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccAWSAPIGatewayRestAPIConfig,
+				Config: testAccAWSGameliftBuildBasicConfig(buildName, bucketName, roleName),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckAWSGameliftBuildExists("aws_gamelift_build.test", &conf),
-					// TODO
-					resource.TestCheckResourceAttr("aws_gamelift_build.test", "name", "bar"),
-					resource.TestCheckResourceAttr("aws_gamelift_build.test", "description", ""),
-					resource.TestCheckResourceAttrSet("aws_gamelift_build.test", "created_date"),
-					resource.TestCheckNoResourceAttr("aws_gamelift_build.test", "binary_media_types"),
+					resource.TestCheckResourceAttr("aws_gamelift_build.test", "name", buildName),
+					resource.TestCheckResourceAttr("aws_gamelift_build.test", "operating_system", "AMAZON_LINUX"),
+					resource.TestCheckResourceAttr("aws_gamelift_build.test", "storage_location.#", "1"),
+					resource.TestCheckResourceAttr("aws_gamelift_build.test", "storage_location.0.bucket", bucketName),
+					resource.TestCheckResourceAttr("aws_gamelift_build.test", "storage_location.0.key", "tf-acc-test"),
+					resource.TestMatchResourceAttr("aws_gamelift_build.test", "storage_location.0.role_arn", roleArnRe),
 				),
 			},
 			{
-				Config: testAccAWSAPIGatewayRestAPIUpdateConfig,
+				Config: testAccAWSGameliftBuildBasicUpdateConfig(buildName, bucketName, roleName),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckAWSGameliftBuildExists("aws_gamelift_build.test", &conf),
-					// TODO
-					resource.TestCheckResourceAttr("aws_gamelift_build.test", "name", "test"),
-					resource.TestCheckResourceAttr("aws_gamelift_build.test", "description", "test"),
-					resource.TestCheckResourceAttrSet("aws_gamelift_build.test", "created_date"),
-					resource.TestCheckResourceAttr("aws_gamelift_build.test", "binary_media_types.#", "1"),
-					resource.TestCheckResourceAttr("aws_gamelift_build.test", "binary_media_types.0", "application/octet-stream"),
+					resource.TestCheckResourceAttr("aws_gamelift_build.test", "name", buildName),
+					resource.TestCheckResourceAttr("aws_gamelift_build.test", "operating_system", "AMAZON_LINUX"),
+					resource.TestCheckResourceAttr("aws_gamelift_build.test", "storage_location.#", "1"),
+					resource.TestCheckResourceAttr("aws_gamelift_build.test", "storage_location.0.bucket", bucketName),
+					resource.TestCheckResourceAttr("aws_gamelift_build.test", "storage_location.0.key", "tf-acc-test"),
+					resource.TestMatchResourceAttr("aws_gamelift_build.test", "storage_location.0.role_arn", roleArnRe),
 				),
 			},
 		},
@@ -61,16 +69,18 @@ func testAccCheckAWSGameliftBuildExists(n string, res *gamelift.Build) resource.
 		req := &gamelift.DescribeBuildInput{
 			BuildId: aws.String(rs.Primary.ID),
 		}
-		describe, err := conn.DescribeBuild(req)
+		out, err := conn.DescribeBuild(req)
 		if err != nil {
 			return err
 		}
 
-		if *describe.Id != rs.Primary.ID {
+		b := out.Build
+
+		if *b.BuildId != rs.Primary.ID {
 			return fmt.Errorf("Gamelift Build not found")
 		}
 
-		*res = *describe.Build
+		*res = *b
 
 		return nil
 	}
@@ -85,12 +95,11 @@ func testAccCheckAWSGameliftBuildDestroy(s *terraform.State) error {
 		}
 
 		req := gamelift.DescribeBuildInput{
-			BuildId: aws.String(d.Id()),
+			BuildId: aws.String(rs.Primary.ID),
 		}
-		describe, err := conn.DescribeBuild(&req)
+		out, err := conn.DescribeBuild(&req)
 		if err == nil {
-			if len(describe.Items) != 0 &&
-				*describe.Items[0].Id == rs.Primary.ID {
+			if *out.Build.BuildId == rs.Primary.ID {
 				return fmt.Errorf("Gamelift Build still exists")
 			}
 		}
@@ -101,14 +110,79 @@ func testAccCheckAWSGameliftBuildDestroy(s *terraform.State) error {
 	return nil
 }
 
-const testAccAWSAPIGatewayRestAPIConfig = `
+func testAccAWSGameliftBuildBasicConfig(buildName, bucketName, roleName string) string {
+	return fmt.Sprintf(`
 resource "aws_gamelift_build" "test" {
-  // TODO
+  name = "%s"
+  operating_system = "AMAZON_LINUX"
+  storage_location {
+    bucket = "${aws_s3_bucket.test.bucket}"
+    key = "tf-acc-test" // TODO?
+    role_arn = "${aws_iam_role.test.arn}"
+  }
 }
-`
 
-const testAccAWSAPIGatewayRestAPIUpdateConfig = `
-resource "aws_gamelift_build" "test" {
-  // TODO
+resource "aws_s3_bucket" "test" {
+  bucket = "%s"
 }
-`
+
+resource "aws_iam_role" "test" {
+  name = "%s"
+  path = "/"
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Principal": {
+        "Service": "gamelift.amazonaws.com"
+      },
+      "Effect": "Allow",
+      "Sid": ""
+    }
+  ]
+}
+EOF
+}
+`, buildName, bucketName, roleName)
+}
+
+func testAccAWSGameliftBuildBasicUpdateConfig(buildName, bucketName, roleName string) string {
+	return fmt.Sprintf(`
+resource "aws_gamelift_build" "test" {
+  name = "%s"
+  operating_system = "AMAZON_LINUX"
+  storage_location {
+    bucket = "${aws_s3_bucket.test.bucket}"
+    key = "tf-acc-test" // TODO?
+    role_arn = "${aws_iam_role.test.arn}"
+  }
+  version = "??" // TODO
+}
+
+resource "aws_s3_bucket" "test" {
+  bucket = "%s"
+}
+
+resource "aws_iam_role" "test" {
+  name = "%s"
+  path = "/"
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      },
+      "Effect": "Allow",
+      "Sid": ""
+    }
+  ]
+}
+EOF
+}
+`, buildName, bucketName, roleName)
+}
